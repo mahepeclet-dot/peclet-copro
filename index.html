@@ -1,0 +1,838 @@
+import { useState, useEffect, useRef } from "react";
+
+// ─── SUPABASE CONFIG ──────────────────────────────────────────────────────────
+const SUPABASE_URL = "https://stossamohwyktkhuxdmwy.supabase.co";
+const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN0b3NhbW9od3lrdGtodXhkbXd5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzkxNDI4OTIsImV4cCI6MjA5NDcxODg5Mn0.re3hs8Vk8e00KvA3JAS0w_k5IpfS9g5pmRDDb9Dmp5A";
+
+const sb = async (path, options = {}) => {
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
+    headers: {
+      "apikey": SUPABASE_KEY,
+      "Authorization": `Bearer ${SUPABASE_KEY}`,
+      "Content-Type": "application/json",
+      "Prefer": options.prefer || "return=representation",
+      ...options.headers,
+    },
+    ...options,
+  });
+  if (!res.ok) {
+    const err = await res.text();
+    throw new Error(err);
+  }
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
+};
+
+const api = {
+  getTickets: (propertyId) => sb(`tickets?order=created_at.desc${propertyId ? `&property_id=eq.${propertyId}` : ""}`),
+  getAnnouncements: (propertyId) => sb(`announcements?order=created_at.desc${propertyId ? `&or=(property_id.eq.${propertyId},property_id.eq.all)` : ""}`),
+  createTicket: (data) => sb("tickets", { method: "POST", body: JSON.stringify(data) }),
+  updateTicket: (id, data) => sb(`tickets?id=eq.${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  deleteTicket: (id) => sb(`tickets?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }),
+  createAnn: (data) => sb("announcements", { method: "POST", body: JSON.stringify(data) }),
+  deleteAnn: (id) => sb(`announcements?id=eq.${id}`, { method: "DELETE", prefer: "return=minimal" }),
+};
+
+// ─── FONTS & STYLES ───────────────────────────────────────────────────────────
+const fontLink = document.createElement("link");
+fontLink.rel = "stylesheet";
+fontLink.href = "https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=Inter:wght@300;400;500;600&display=swap";
+document.head.appendChild(fontLink);
+
+const style = document.createElement("style");
+style.textContent = `
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', sans-serif; background: #F0F0EE; }
+  :root {
+    --dark: #2E2E2E; --dark2: #1A1A1A;
+    --mint: #4EEEA0; --mint-dim: rgba(78,238,160,0.1); --mint-dim2: rgba(78,238,160,0.2);
+    --text: #1C1C1C; --muted: #7A7A7A;
+    --bg: #F0F0EE; --card: #FFFFFF;
+    --border: rgba(0,0,0,0.07); --shadow: 0 2px 16px rgba(0,0,0,0.07);
+    --radius: 14px;
+  }
+  .app { min-height: 100vh; background: var(--bg); }
+  .nav {
+    background: var(--dark); padding: 0 20px; height: 54px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 200;
+    border-bottom: 1.5px solid rgba(78,238,160,0.15);
+  }
+  .nav-logo { display: flex; align-items: center; gap: 10px; }
+  .logo-mark {
+    width: 32px; height: 32px; border: 2.5px solid var(--mint); border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'Syne',sans-serif; font-weight: 800; color: var(--mint); font-size: 14px;
+  }
+  .nav-title { font-family:'Syne',sans-serif; font-weight:700; color:#fff; font-size:14px; }
+  .nav-sub-text { font-size:10px; color:rgba(255,255,255,0.35); display:block; margin-top:1px; }
+  .nav-toggle { display:flex; background:rgba(255,255,255,0.06); border-radius:8px; padding:3px; gap:2px; }
+  .nav-btn {
+    padding:5px 12px; border:none; border-radius:6px; font-size:11px; font-weight:600;
+    cursor:pointer; color:rgba(255,255,255,0.4); background:transparent;
+    font-family:'Inter',sans-serif; transition:all .2s;
+  }
+  .nav-btn.active { background:var(--mint); color:var(--dark); }
+  .main { max-width: 640px; margin: 0 auto; padding: 20px 16px 90px; }
+  .card { background:var(--card); border-radius:var(--radius); padding:18px; margin-bottom:14px; border:1px solid var(--border); box-shadow:var(--shadow); }
+  .section-title { font-family:'Syne',sans-serif; font-size:18px; font-weight:700; color:var(--text); margin-bottom:3px; }
+  .section-sub { font-size:12px; color:var(--muted); margin-bottom:16px; }
+  .form-label { font-size:10px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; margin-bottom:7px; display:block; }
+  .form-group { margin-bottom:14px; }
+  input[type=text], textarea, select {
+    width:100%; border:1.5px solid var(--border); border-radius:9px; padding:9px 12px;
+    font-size:13px; font-family:'Inter',sans-serif; color:var(--text); background:var(--bg);
+    outline:none; transition:border-color .15s; -webkit-appearance:none;
+  }
+  input[type=text]:focus, textarea:focus, select:focus { border-color:var(--mint); }
+  textarea { resize:vertical; min-height:72px; }
+  .btn-primary {
+    width:100%; background:var(--mint); color:var(--dark); border:none; border-radius:10px;
+    padding:13px; font-size:13px; font-weight:700; cursor:pointer;
+    font-family:'Inter',sans-serif; transition:all .15s; letter-spacing:.02em;
+  }
+  .btn-primary:hover { background:#3ddb8c; transform:translateY(-1px); }
+  .btn-primary:disabled { background:#C8C8C8; color:#888; cursor:not-allowed; transform:none; }
+  .btn-secondary {
+    background:var(--bg); border:1.5px solid var(--border); border-radius:10px; padding:11px;
+    font-size:13px; font-weight:600; cursor:pointer; font-family:'Inter',sans-serif;
+    color:var(--text); transition:all .15s; width:100%; margin-top:8px;
+  }
+  .btn-secondary:hover { border-color:var(--mint); }
+  .btn-sm { padding:5px 12px; border-radius:7px; font-size:11px; font-weight:600; cursor:pointer; font-family:'Inter',sans-serif; border:none; transition:all .15s; }
+  .categories-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:7px; }
+  .cat-btn { border:1.5px solid var(--border); background:var(--bg); border-radius:10px; padding:10px 4px; text-align:center; cursor:pointer; transition:all .15s; }
+  .cat-btn:hover, .cat-btn.selected { border-color:var(--mint); background:var(--mint-dim); }
+  .cat-btn .icon { font-size:18px; display:block; margin-bottom:4px; }
+  .cat-btn .cat-label { font-size:9px; color:var(--text); font-weight:600; line-height:1.2; }
+  .location-row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .ticket-item { border:1px solid var(--border); border-radius:11px; padding:13px 15px; margin-bottom:9px; background:white; cursor:pointer; transition:all .15s; }
+  .ticket-item:hover { box-shadow:0 4px 20px rgba(0,0,0,0.09); transform:translateY(-1px); }
+  .ticket-item.urgent { border-left:3px solid #FF4444; }
+  .ticket-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:5px; }
+  .ticket-cat { font-size:10px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  .ticket-title { font-size:13px; font-weight:600; color:var(--text); margin-bottom:3px; }
+  .ticket-desc { font-size:12px; color:var(--muted); line-height:1.4; }
+  .ticket-footer { display:flex; justify-content:space-between; align-items:center; margin-top:9px; }
+  .loc-tag { display:inline-flex; align-items:center; gap:4px; background:var(--mint-dim); color:#1A6642; font-size:10px; font-weight:600; padding:3px 8px; border-radius:5px; margin-top:5px; }
+  .vote-btn { background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:4px 10px; font-size:11px; cursor:pointer; transition:all .15s; font-family:'Inter',sans-serif; display:flex; align-items:center; gap:4px; font-weight:500; }
+  .vote-btn:hover { border-color:var(--mint); background:var(--mint-dim); }
+  .vote-btn.voted { background:var(--mint-dim); border-color:var(--mint); color:#1A6642; }
+  .status-badge { display:inline-flex; align-items:center; gap:4px; padding:3px 8px; border-radius:20px; font-size:10px; font-weight:700; white-space:nowrap; }
+  .status-dot { width:5px; height:5px; border-radius:50%; }
+  .admin-note { background:var(--mint-dim); border:1px solid rgba(78,238,160,0.3); border-radius:7px; padding:7px 10px; font-size:11px; color:#1A6642; margin-top:7px; font-weight:500; }
+  .success-box { text-align:center; padding:36px 16px; }
+  .success-icon { width:60px; height:60px; background:var(--mint-dim); border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:26px; margin:0 auto 16px; border:2px solid var(--mint); }
+  .admin-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin-bottom:18px; }
+  .stat-card { background:var(--card); border-radius:10px; padding:12px; text-align:center; border:1px solid var(--border); }
+  .stat-number { font-family:'Syne',sans-serif; font-size:22px; font-weight:800; color:var(--text); }
+  .stat-label { font-size:10px; color:var(--muted); margin-top:2px; font-weight:500; }
+  .admin-ticket { background:var(--card); border:1px solid var(--border); border-radius:11px; padding:14px; margin-bottom:9px; }
+  .ticket-id { font-size:10px; color:var(--mint); font-weight:700; letter-spacing:.06em; background:var(--dark); padding:2px 6px; border-radius:4px; }
+  .tabs { display:flex; gap:3px; background:rgba(0,0,0,0.05); border-radius:9px; padding:3px; margin-bottom:18px; }
+  .tab { flex:1; padding:7px; border:none; border-radius:7px; background:transparent; font-size:12px; font-weight:600; cursor:pointer; font-family:'Inter',sans-serif; color:var(--muted); transition:all .15s; text-align:center; }
+  .tab.active { background:white; color:var(--text); box-shadow:0 1px 6px rgba(0,0,0,0.09); }
+  .filter-row { display:flex; gap:6px; margin-bottom:14px; overflow-x:auto; padding-bottom:2px; scrollbar-width:none; }
+  .filter-row::-webkit-scrollbar { display:none; }
+  .filter-chip { white-space:nowrap; padding:5px 12px; border-radius:20px; font-size:11px; font-weight:600; border:1.5px solid var(--border); background:white; cursor:pointer; transition:all .12s; font-family:'Inter',sans-serif; color:var(--muted); }
+  .filter-chip.active { background:var(--dark); color:var(--mint); border-color:var(--dark); }
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:300; display:flex; align-items:flex-end; justify-content:center; }
+  .modal { background:white; border-radius:18px 18px 0 0; padding:20px 18px 40px; width:100%; max-width:640px; max-height:88vh; overflow-y:auto; animation:slideUp .28s ease; }
+  @keyframes slideUp { from { transform:translateY(100%); } to { transform:translateY(0); } }
+  .modal-handle { width:34px; height:4px; background:#DDD; border-radius:2px; margin:0 auto 18px; }
+  .property-header { background:var(--dark); border-radius:var(--radius); padding:18px; margin-bottom:16px; border:1px solid rgba(78,238,160,0.15); }
+  .prop-label { font-size:10px; font-weight:600; color:var(--mint); text-transform:uppercase; letter-spacing:.1em; margin-bottom:8px; display:block; }
+  .prop-name { font-family:'Syne',sans-serif; font-size:18px; font-weight:700; color:#fff; margin-bottom:2px; }
+  .prop-addr { font-size:12px; color:rgba(255,255,255,0.45); }
+  .prop-code { display:inline-block; background:var(--mint-dim2); color:var(--mint); font-size:10px; font-weight:700; padding:2px 8px; border-radius:4px; margin-top:8px; letter-spacing:.06em; }
+  .cta-card { background:var(--dark); border-radius:var(--radius); padding:18px; margin-bottom:18px; border:1px solid rgba(78,238,160,0.2); display:flex; align-items:center; justify-content:space-between; gap:12px; }
+  .cta-btn { background:var(--mint); color:var(--dark); border:none; border-radius:9px; padding:10px 16px; font-size:12px; font-weight:700; cursor:pointer; font-family:'Inter',sans-serif; white-space:nowrap; transition:all .15s; }
+  .cta-btn:hover { background:#3ddb8c; }
+  .announcement { background:var(--dark); border-radius:var(--radius); padding:18px; margin-bottom:12px; border:1px solid rgba(78,238,160,0.2); position:relative; overflow:hidden; }
+  .announcement::before { content:''; position:absolute; top:0; left:0; width:3px; height:100%; background:var(--mint); }
+  .ann-badge { display:inline-block; background:var(--mint-dim2); color:var(--mint); font-size:9px; font-weight:700; text-transform:uppercase; letter-spacing:.1em; padding:3px 8px; border-radius:4px; margin-bottom:8px; }
+  .ann-title { font-family:'Syne',sans-serif; font-size:14px; font-weight:700; color:#fff; margin-bottom:6px; }
+  .ann-body { font-size:12px; color:rgba(255,255,255,0.6); line-height:1.5; }
+  .ann-date { font-size:10px; color:rgba(255,255,255,0.25); margin-top:10px; }
+  .prop-list { max-height:300px; overflow-y:auto; border:1px solid var(--border); border-radius:9px; background:white; }
+  .prop-item { padding:10px 14px; cursor:pointer; border-bottom:1px solid var(--border); transition:background .12s; display:flex; align-items:center; justify-content:space-between; }
+  .prop-item:last-child { border-bottom:none; }
+  .prop-item:hover { background:var(--mint-dim); }
+  .prop-item-name { font-size:12px; font-weight:600; color:var(--text); }
+  .prop-item-addr { font-size:10px; color:var(--muted); }
+  .prop-badge { font-size:9px; font-weight:700; color:var(--mint); background:var(--dark); padding:2px 6px; border-radius:4px; }
+  .ann-form-row { display:grid; grid-template-columns:2fr 1fr; gap:10px; }
+  .form-row-2 { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .select-sm { padding:5px 9px; font-size:11px; border-radius:7px; cursor:pointer; font-weight:600; -webkit-appearance:none; }
+  .spinner { width:20px; height:20px; border:2px solid rgba(78,238,160,0.3); border-top-color:var(--mint); border-radius:50%; animation:spin .7s linear infinite; margin:0 auto; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .toast { position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--dark); color:var(--mint); padding:10px 20px; border-radius:20px; font-size:12px; font-weight:600; z-index:500; border:1px solid rgba(78,238,160,0.3); animation:fadeInUp .3s ease; }
+  @keyframes fadeInUp { from { opacity:0; transform:translate(-50%,10px); } to { opacity:1; transform:translate(-50%,0); } }
+  .live-dot { width:6px; height:6px; background:var(--mint); border-radius:50%; display:inline-block; margin-right:5px; animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+  .error-box { background:#FDEDEE; border:1px solid #FFCDD2; border-radius:10px; padding:14px; margin-bottom:14px; font-size:12px; color:#C62828; }
+`;
+document.head.appendChild(style);
+
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+const PROPERTIES = [
+  { id:"0021", name:"37 LECLERC",               address:"37 Av. Général Leclerc, 69100 Villeurbanne" },
+  { id:"0023", name:"LE GREEN CASCADE",          address:"128-136 Rue Antoine Charial, 69003 Lyon" },
+  { id:"0079", name:"LA CONTRESCARPE",           address:"79 Rue Pierre Audry, 69009 Lyon" },
+  { id:"0082", name:"GREY CEDAR",                address:"13 Av. Pierre Millon, 69008 Lyon" },
+  { id:"0086", name:"16 RUE VENDÔME",            address:"16 Rue Vendôme, 69006 Lyon" },
+  { id:"0092", name:"LE MERCURE",                address:"15 Cours Aristide Briand, 69300 Caluire" },
+  { id:"0096", name:"60 COURS EMILE ZOLA",       address:"60 Cours Emile Zola, 69100 Villeurbanne" },
+  { id:"0098", name:"RÉSIDENCE PAULINE",         address:"10 Passage Meynis, 69003 Lyon" },
+  { id:"0100", name:"LES TERRASSES DU VERNAY",   address:"22-24 Rue Martin Basse, 69300 Caluire" },
+  { id:"0101", name:"PAR DESSUS LES TOITS",      address:"262/264 Rue F. Pressensé, 69100 Villeurbanne" },
+  { id:"0104", name:"LA VILLANELLE",             address:"23 Rue Riboud, 69003 Lyon" },
+  { id:"0107", name:"L'ALEZAN",                  address:"6-12 Rue de Longchamp, 69100 Villeurbanne" },
+  { id:"0115", name:"VILLA VALÉRIE",             address:"11 Rue Anatole France, 69100 Villeurbanne" },
+  { id:"0118", name:"67 GDE RUE ST-CLAIR",       address:"67 Grande Rue de Saint Clair, 69300 Caluire" },
+  { id:"0120", name:"LE CÈDRE ET LE FILAO",      address:"5-7 Rue de l'Éternité, 69008 Lyon" },
+  { id:"0129", name:"LES HAUTS DE FONTANIÈRES",  address:"255-257 Chemin de Fontanières, 69350 La Mulatière" },
+  { id:"0130", name:"LE SAPHIR",                 address:"180 Cours Emile Zola, 69100 Villeurbanne" },
+  { id:"0135", name:"LES SOURCES 1",             address:"66-72 Rue Pierre Audry, 69009 Lyon" },
+  { id:"0137", name:"LE MÉTROPOLITAIN",          address:"107 Cours Emile Zola, 69100 Villeurbanne" },
+  { id:"0138", name:"LE MARENGO",                address:"25 Rue François Gillet, 69100 Villeurbanne" },
+  { id:"0140", name:"L'ALEXANDRE",               address:"271 Av. Jean Jaurès, 69007 Lyon" },
+  { id:"0147", name:"LE BRANLY",                 address:"20-22 Rue Branly, 69100 Villeurbanne" },
+  { id:"0148", name:"LE LYANNE",                 address:"43-45 Rue É. Aynard, 69100 Villeurbanne" },
+  { id:"0149", name:"EN SCÈNE – SCÉNARIO",       address:"93 Rue Audibert et Lavirotte, 69008 Lyon" },
+  { id:"0155", name:"CÔTÉ GRATTE-CIEL",          address:"17-19 Rue Paul Verlaine, 69100 Villeurbanne" },
+];
+
+const CATEGORIES = [
+  { id:"ascenseur",        label:"Ascenseur",     icon:"⬆️" },
+  { id:"eclairage",        label:"Éclairage",     icon:"💡" },
+  { id:"interphone",       label:"Interphone",    icon:"📞" },
+  { id:"parties_communes", label:"P. communes",   icon:"🏢" },
+  { id:"chauffage",        label:"Chauffage",     icon:"🔥" },
+  { id:"securite",         label:"Sécurité",      icon:"🔒" },
+  { id:"proprete",         label:"Propreté",      icon:"🧹" },
+  { id:"autre",            label:"Autre",         icon:"📋" },
+];
+
+const ZONES = ["Hall d'entrée","Couloir","Cage d'escalier","Ascenseur","Cave / Local vélo","Parking","Toiture / Terrasse","Espace vert","Boîtes aux lettres","Local poubelles","Autre"];
+
+const STATUS = {
+  nouveau:  { label:"Nouveau",  color:"#E8541A", bg:"#FFF1EC" },
+  en_cours: { label:"En cours", color:"#D4860A", bg:"#FFF7EC" },
+  resolu:   { label:"Résolu",   color:"#1A7A4A", bg:"#EAFAF1" },
+  annule:   { label:"Annulé",   color:"#999",    bg:"#F5F5F5" },
+};
+
+const PRIORITY = {
+  basse:   { label:"Basse",   color:"#999" },
+  normale: { label:"Normale", color:"#3A8FD4" },
+  haute:   { label:"Haute",   color:"#D47A1A" },
+  urgente: { label:"Urgente", color:"#D42020" },
+};
+
+const fmt = (iso) => new Date(iso).toLocaleDateString("fr-FR",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
+const loc = (t) => [t.batiment&&`Bât. ${t.batiment}`, t.escalier&&`Esc. ${t.escalier}`, t.etage, t.zone].filter(Boolean).join(" · ");
+
+function StatusBadge({ status }) {
+  const c = STATUS[status] || STATUS.nouveau;
+  return <span className="status-badge" style={{background:c.bg,color:c.color}}><span className="status-dot" style={{background:c.color}}/>{c.label}</span>;
+}
+
+function Toast({ msg }) {
+  return msg ? <div className="toast">{msg}</div> : null;
+}
+
+// ─── PROPERTY PICKER ─────────────────────────────────────────────────────────
+function PropertyPicker({ onSelect }) {
+  const [search, setSearch] = useState("");
+  const filtered = PROPERTIES.filter(p =>
+    !search || p.name.toLowerCase().includes(search.toLowerCase()) ||
+    p.id.includes(search) || p.address.toLowerCase().includes(search.toLowerCase())
+  );
+  return (
+    <div className="main">
+      <div style={{textAlign:"center",marginBottom:24}}>
+        <div style={{width:52,height:52,border:"3px solid var(--mint)",borderRadius:12,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'Syne',sans-serif",fontWeight:800,color:"var(--mint)",fontSize:22,margin:"0 auto 14px",background:"var(--dark)"}}>F</div>
+        <div style={{fontFamily:"'Syne',sans-serif",fontSize:18,fontWeight:700,color:"var(--text)",marginBottom:4}}>Espace Résidents</div>
+        <div style={{fontSize:12,color:"var(--muted)"}}>Sélectionnez votre résidence</div>
+      </div>
+      <div style={{marginBottom:10}}>
+        <input type="text" placeholder="🔍  Rechercher par nom ou adresse…" value={search} onChange={e=>setSearch(e.target.value)}/>
+      </div>
+      <div className="prop-list">
+        {filtered.map(p=>(
+          <div key={p.id} className="prop-item" onClick={()=>onSelect(p.id)}>
+            <div>
+              <div className="prop-item-name">{p.name}</div>
+              <div className="prop-item-addr">{p.address}</div>
+            </div>
+            <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+              <span className="prop-badge">{p.id}</span>
+              <span style={{fontSize:16,color:"var(--muted)"}}>›</span>
+            </div>
+          </div>
+        ))}
+      </div>
+      <p style={{fontSize:10,color:"var(--muted)",textAlign:"center",marginTop:14}}>Syndic Péclet / Vaudelle · {PROPERTIES.length} résidences</p>
+    </div>
+  );
+}
+
+// ─── RESIDENT VIEW ────────────────────────────────────────────────────────────
+function ResidentView({ propertyId, onBack }) {
+  const property = PROPERTIES.find(p=>p.id===propertyId);
+  const [view, setView] = useState("home");
+  const [tickets, setTickets] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [sending, setSending] = useState(false);
+  const [toast, setToast] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [filterCat, setFilterCat] = useState("all");
+  const [voted, setVoted] = useState(()=>{try{return JSON.parse(localStorage.getItem(`voted_${propertyId}`)||"[]")}catch{return[]}});
+  const [form, setForm] = useState({category:"",title:"",description:"",batiment:"",escalier:"",etage:"",zone:"",apartment:"",email:""});
+
+  const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(""),2500); };
+
+  const load = async () => {
+    try {
+      const [t, a] = await Promise.all([
+        api.getTickets(propertyId),
+        api.getAnnouncements(propertyId),
+      ]);
+      setTickets(t||[]);
+      setAnnouncements(a||[]);
+      setError(null);
+    } catch(e) { setError("Impossible de charger les données. Vérifiez votre connexion."); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(()=>{ load(); const interval=setInterval(load,30000); return ()=>clearInterval(interval); },[propertyId]);
+
+  const handleVote = async (ticket) => {
+    const has = voted.includes(ticket.id);
+    const nv = has ? voted.filter(x=>x!==ticket.id) : [...voted,ticket.id];
+    setVoted(nv);
+    localStorage.setItem(`voted_${propertyId}`,JSON.stringify(nv));
+    try {
+      await api.updateTicket(ticket.id, { votes: Math.max(0,(ticket.votes||0)+(has?-1:1)) });
+      await load();
+    } catch { showToast("Erreur lors du vote"); }
+  };
+
+  const handleSubmit = async () => {
+    if(!form.category||!form.title.trim()) return;
+    setSending(true);
+    try {
+      await api.createTicket({
+        property_id: propertyId,
+        category: form.category, title: form.title, description: form.description,
+        batiment: form.batiment, escalier: form.escalier, etage: form.etage, zone: form.zone,
+        apartment: form.apartment, email: form.email,
+        status: "nouveau", priority: "normale", votes: 0, note: "",
+      });
+      setForm({category:"",title:"",description:"",batiment:"",escalier:"",etage:"",zone:"",apartment:"",email:""});
+      setView("success");
+      await load();
+    } catch(e) { showToast("Erreur envoi. Réessayez."); }
+    finally { setSending(false); }
+  };
+
+  const active = tickets.filter(t=>t.status!=="annule"&&(filterCat==="all"||t.category===filterCat));
+
+  if(!property) return null;
+
+  if(view==="success") return (
+    <div className="main">
+      <div className="card">
+        <div className="success-box">
+          <div className="success-icon">✅</div>
+          <h2 style={{fontFamily:"'Syne',sans-serif",fontSize:18,fontWeight:700,marginBottom:8}}>Signalement envoyé !</h2>
+          <p style={{fontSize:13,color:"var(--muted)",lineHeight:1.6,marginBottom:20}}>Votre signalement a bien été transmis à M. Péclet / S. Vaudelle.</p>
+          <button className="btn-primary" onClick={()=>setView("home")}>← Retour</button>
+        </div>
+      </div>
+      <Toast msg={toast}/>
+    </div>
+  );
+
+  if(view==="report") return (
+    <div className="main">
+      <div style={{marginBottom:16,display:"flex",alignItems:"center",gap:10}}>
+        <button onClick={()=>setView("home")} style={{background:"none",border:"none",fontSize:22,cursor:"pointer",color:"var(--text)",lineHeight:1}}>←</button>
+        <div>
+          <div className="section-title" style={{fontSize:16}}>Nouveau signalement</div>
+          <div className="section-sub" style={{margin:0}}>{property.name}</div>
+        </div>
+      </div>
+      <div className="card">
+        <div className="form-group">
+          <label className="form-label">Catégorie *</label>
+          <div className="categories-grid">
+            {CATEGORIES.map(c=>(
+              <button key={c.id} className={`cat-btn ${form.category===c.id?"selected":""}`}
+                onClick={()=>setForm(f=>({...f,category:c.id}))}>
+                <span className="icon">{c.icon}</span>
+                <span className="cat-label">{c.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">📍 Localisation précise</label>
+          <div className="location-row" style={{marginBottom:8}}>
+            <div>
+              <label style={{fontSize:10,color:"var(--muted)",marginBottom:4,display:"block"}}>Bâtiment</label>
+              <input type="text" placeholder="A, B, 1, 2…" value={form.batiment} onChange={e=>setForm(f=>({...f,batiment:e.target.value}))}/>
+            </div>
+            <div>
+              <label style={{fontSize:10,color:"var(--muted)",marginBottom:4,display:"block"}}>Escalier / Cage</label>
+              <input type="text" placeholder="Esc. 1, Cage C…" value={form.escalier} onChange={e=>setForm(f=>({...f,escalier:e.target.value}))}/>
+            </div>
+          </div>
+          <div className="location-row">
+            <div>
+              <label style={{fontSize:10,color:"var(--muted)",marginBottom:4,display:"block"}}>Étage</label>
+              <select value={form.etage} onChange={e=>setForm(f=>({...f,etage:e.target.value}))}>
+                <option value="">— Étage —</option>
+                <option value="RDC">Rez-de-chaussée</option>
+                {[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15].map(n=><option key={n} value={`${n}e étage`}>{n}e étage</option>)}
+                <option value="Combles">Combles</option>
+              </select>
+            </div>
+            <div>
+              <label style={{fontSize:10,color:"var(--muted)",marginBottom:4,display:"block"}}>Zone</label>
+              <select value={form.zone} onChange={e=>setForm(f=>({...f,zone:e.target.value}))}>
+                <option value="">— Zone —</option>
+                {ZONES.map(z=><option key={z} value={z}>{z}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Description *</label>
+          <input type="text" placeholder="Ex : Ampoule grillée, porte qui coince…" value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))}/>
+        </div>
+        <div className="form-group">
+          <label className="form-label">Précisions</label>
+          <textarea placeholder="Détails supplémentaires…" value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))}/>
+        </div>
+        <div className="form-row-2">
+          <div className="form-group">
+            <label className="form-label">Appartement</label>
+            <input type="text" placeholder="Ex : 3B" value={form.apartment} onChange={e=>setForm(f=>({...f,apartment:e.target.value}))}/>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Email (suivi)</label>
+            <input type="text" placeholder="votre@email.com" value={form.email} onChange={e=>setForm(f=>({...f,email:e.target.value}))}/>
+          </div>
+        </div>
+        <button className="btn-primary" disabled={!form.category||!form.title.trim()||sending} onClick={handleSubmit}>
+          {sending ? <span className="spinner"/> : "Envoyer le signalement"}
+        </button>
+        <button className="btn-secondary" onClick={()=>setView("home")}>Annuler</button>
+      </div>
+      <Toast msg={toast}/>
+    </div>
+  );
+
+  return (
+    <div className="main">
+      <div className="property-header">
+        <span className="prop-label">Votre résidence</span>
+        <div className="prop-name">{property.name}</div>
+        <div className="prop-addr">{property.address}</div>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginTop:8}}>
+          <span className="prop-code">{property.id}</span>
+          <span style={{fontSize:10,color:"rgba(255,255,255,0.35)"}}><span className="live-dot"/>Temps réel</span>
+        </div>
+      </div>
+
+      {error && <div className="error-box">⚠️ {error}</div>}
+
+      {announcements.length>0 && (
+        <div style={{marginBottom:20}}>
+          <div className="section-title" style={{fontSize:15}}>Informations</div>
+          <div className="section-sub">Communications de votre syndic</div>
+          {announcements.map(a=>(
+            <div key={a.id} className="announcement">
+              <span className="ann-badge">{a.type}</span>
+              <div className="ann-title">{a.title}</div>
+              <div className="ann-body">{a.body}</div>
+              <div className="ann-date">{fmt(a.created_at)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="cta-card">
+        <div>
+          <div style={{fontFamily:"'Syne',sans-serif",fontSize:15,fontWeight:700,color:"white",marginBottom:3}}>Signaler un problème</div>
+          <div style={{fontSize:11,color:"rgba(255,255,255,0.45)"}}>{active.length} signalement{active.length!==1?"s":""} en cours</div>
+        </div>
+        <button className="cta-btn" onClick={()=>setView("report")}>+ Nouveau</button>
+      </div>
+
+      <div className="section-title" style={{fontSize:15}}>Signalements</div>
+      <div className="section-sub">Suivi des problèmes déclarés</div>
+
+      <div className="filter-row">
+        <button className={`filter-chip ${filterCat==="all"?"active":""}`} onClick={()=>setFilterCat("all")}>Tous</button>
+        {CATEGORIES.filter(c=>active.some(t=>t.category===c.id)).map(c=>(
+          <button key={c.id} className={`filter-chip ${filterCat===c.id?"active":""}`} onClick={()=>setFilterCat(c.id)}>{c.icon} {c.label}</button>
+        ))}
+      </div>
+
+      {loading ? <div style={{textAlign:"center",padding:40}}><div className="spinner"/></div>
+      : active.length===0 ? (
+        <div style={{textAlign:"center",padding:"36px 20px",color:"var(--muted)"}}>
+          <div style={{fontSize:32,marginBottom:10}}>✨</div>
+          <p style={{fontSize:13}}>Aucun signalement en cours</p>
+        </div>
+      ) : active.map(t=>{
+        const cat=CATEGORIES.find(c=>c.id===t.category);
+        const hasVoted=voted.includes(t.id);
+        const l=loc(t);
+        return (
+          <div key={t.id} className={`ticket-item ${t.priority==="urgente"?"urgent":""}`} onClick={()=>setSelected(t)}>
+            <div className="ticket-header">
+              <span className="ticket-cat">{cat?.icon} {cat?.label}</span>
+              <StatusBadge status={t.status}/>
+            </div>
+            <div className="ticket-title">{t.title}</div>
+            {l && <div className="loc-tag">📍 {l}</div>}
+            {t.description && <div className="ticket-desc" style={{marginTop:4}}>{t.description.slice(0,80)}{t.description.length>80?"…":""}</div>}
+            {t.note && <div className="admin-note">💬 {t.note}</div>}
+            <div className="ticket-footer">
+              <button className={`vote-btn ${hasVoted?"voted":""}`} onClick={e=>{e.stopPropagation();handleVote(t);}}>
+                👍 {t.votes||0} concerné{(t.votes||0)>1?"s":""}
+              </button>
+              <span style={{fontSize:10,color:"var(--muted)"}}>{fmt(t.created_at)}</span>
+            </div>
+          </div>
+        );
+      })}
+
+      {selected && (()=>{
+        const t=selected; const cat=CATEGORIES.find(c=>c.id===t.category); const l=loc(t); const hasVoted=voted.includes(t.id);
+        return (
+          <div className="modal-overlay" onClick={()=>setSelected(null)}>
+            <div className="modal" onClick={e=>e.stopPropagation()}>
+              <div className="modal-handle"/>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:12}}>
+                <span className="ticket-cat">{cat?.icon} {cat?.label}</span>
+                <StatusBadge status={t.status}/>
+              </div>
+              <h2 style={{fontFamily:"'Syne',sans-serif",fontSize:17,fontWeight:700,marginBottom:10}}>{t.title}</h2>
+              {l && <div className="loc-tag" style={{marginBottom:10}}>📍 {l}</div>}
+              {t.description && <p style={{fontSize:13,color:"var(--muted)",lineHeight:1.6,marginBottom:10}}>{t.description}</p>}
+              {t.note && <div className="admin-note" style={{marginBottom:12}}>💬 <strong>Note du syndic :</strong> {t.note}</div>}
+              <div style={{display:"flex",gap:14,fontSize:11,color:"var(--muted)",marginBottom:16}}>
+                <span>{fmt(t.created_at)}</span>
+                {t.apartment && <span>Appt {t.apartment}</span>}
+              </div>
+              <button className={`vote-btn ${hasVoted?"voted":""}`}
+                style={{width:"100%",justifyContent:"center",padding:"11px",borderRadius:9}}
+                onClick={()=>{handleVote(t);setSelected({...t,votes:(t.votes||0)+(hasVoted?-1:1)});}}>
+                👍 {hasVoted?"Je ne suis plus concerné(e)":`Moi aussi — ${(t.votes||0)+1} total`}
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
+      <Toast msg={toast}/>
+    </div>
+  );
+}
+
+// ─── ADMIN VIEW ───────────────────────────────────────────────────────────────
+function AdminView() {
+  const [tab, setTab] = useState("tickets");
+  const [tickets, setTickets] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [filterProp, setFilterProp] = useState("all");
+  const [editNote, setEditNote] = useState({});
+  const [toast, setToast] = useState("");
+  const [propSearch, setPropSearch] = useState("");
+  const [annForm, setAnnForm] = useState({title:"",body:"",type:"Information",property_id:"all"});
+  const [sending, setSending] = useState(false);
+
+  const showToast = (msg) => { setToast(msg); setTimeout(()=>setToast(""),2500); };
+
+  const load = async () => {
+    try {
+      const [t, a] = await Promise.all([api.getTickets(null), api.getAnnouncements(null)]);
+      setTickets(t||[]); setAnnouncements(a||[]); setError(null);
+    } catch { setError("Erreur de connexion à Supabase."); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(()=>{ load(); const i=setInterval(load,15000); return ()=>clearInterval(i); },[]);
+
+  const update = async (id, data) => {
+    try { await api.updateTicket(id,data); await load(); showToast("✓ Mis à jour"); }
+    catch { showToast("Erreur mise à jour"); }
+  };
+
+  const del = async (id) => {
+    try { await api.deleteTicket(id); setTickets(t=>t.filter(x=>x.id!==id)); showToast("Ticket supprimé"); }
+    catch { showToast("Erreur suppression"); }
+  };
+
+  const submitAnn = async () => {
+    if(!annForm.title.trim()||!annForm.body.trim()) return;
+    setSending(true);
+    try { await api.createAnn(annForm); await load(); setAnnForm({title:"",body:"",type:"Information",property_id:"all"}); showToast("✓ Annonce publiée"); }
+    catch { showToast("Erreur publication"); }
+    finally { setSending(false); }
+  };
+
+  const delAnn = async (id) => {
+    try { await api.deleteAnn(id); setAnnouncements(a=>a.filter(x=>x.id!==id)); showToast("Annonce supprimée"); }
+    catch { showToast("Erreur suppression"); }
+  };
+
+  const filtered = tickets
+    .filter(t=>filterStatus==="all"||t.status===filterStatus)
+    .filter(t=>filterProp==="all"||t.property_id===filterProp)
+    .sort((a,b)=>new Date(b.created_at)-new Date(a.created_at));
+
+  const stats = {
+    total: tickets.length,
+    nouveau: tickets.filter(t=>t.status==="nouveau").length,
+    en_cours: tickets.filter(t=>t.status==="en_cours").length,
+    resolu: tickets.filter(t=>t.status==="resolu").length,
+  };
+
+  return (
+    <div className="main">
+      <div style={{marginBottom:18}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
+          <div className="section-title">Tableau de bord</div>
+          <span style={{fontSize:11,color:"var(--muted)"}}><span className="live-dot"/>Live</span>
+        </div>
+        <div className="section-sub">Portefeuille Péclet / Vaudelle · {PROPERTIES.length} résidences</div>
+      </div>
+
+      {error && <div className="error-box">⚠️ {error} <button onClick={load} style={{marginLeft:8,textDecoration:"underline",background:"none",border:"none",cursor:"pointer",fontSize:12,color:"#C62828"}}>Réessayer</button></div>}
+
+      <div className="admin-stats">
+        {[["total","Total","var(--text)"],["nouveau","Nouveaux",STATUS.nouveau.color],["en_cours","En cours",STATUS.en_cours.color],["resolu","Résolus",STATUS.resolu.color]].map(([k,l,c])=>(
+          <div key={k} className="stat-card">
+            <div className="stat-number" style={{color:c}}>{stats[k]}</div>
+            <div className="stat-label">{l}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="tabs">
+        <button className={`tab ${tab==="tickets"?"active":""}`} onClick={()=>setTab("tickets")}>🎫 Tickets ({tickets.length})</button>
+        <button className={`tab ${tab==="annonces"?"active":""}`} onClick={()=>setTab("annonces")}>📢 Annonces ({announcements.length})</button>
+        <button className={`tab ${tab==="residences"?"active":""}`} onClick={()=>setTab("residences")}>🏢 Résidences</button>
+      </div>
+
+      {tab==="tickets" && <>
+        <div className="filter-row">
+          {["all","nouveau","en_cours","resolu","annule"].map(s=>(
+            <button key={s} className={`filter-chip ${filterStatus===s?"active":""}`} onClick={()=>setFilterStatus(s)}>
+              {s==="all"?"Tous statuts":STATUS[s]?.label}
+            </button>
+          ))}
+        </div>
+        <div className="filter-row">
+          <button className={`filter-chip ${filterProp==="all"?"active":""}`} onClick={()=>setFilterProp("all")}>Toutes résidences</button>
+          {PROPERTIES.filter(p=>tickets.some(t=>t.property_id===p.id)).map(p=>(
+            <button key={p.id} className={`filter-chip ${filterProp===p.id?"active":""}`} onClick={()=>setFilterProp(p.id)}>{p.name}</button>
+          ))}
+        </div>
+        {loading ? <div style={{textAlign:"center",padding:40}}><div className="spinner"/></div>
+        : filtered.length===0 ? <div style={{textAlign:"center",padding:"36px 20px",color:"var(--muted)"}}><div style={{fontSize:32,marginBottom:10}}>📭</div><p style={{fontSize:13}}>Aucun ticket</p></div>
+        : filtered.map(t=>{
+          const cat=CATEGORIES.find(c=>c.id===t.category);
+          const prop=PROPERTIES.find(p=>p.id===t.property_id);
+          const l=loc(t);
+          const noteVal=editNote[t.id]!==undefined?editNote[t.id]:(t.note||"");
+          return (
+            <div key={t.id} className="admin-ticket">
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                <div>
+                  <span className="ticket-id">{t.id?.toString().slice(-6).toUpperCase()}</span>
+                  <div style={{fontSize:13,fontWeight:600,color:"var(--text)",marginTop:5}}>{t.title}</div>
+                  <div style={{fontSize:11,color:"var(--muted)",marginTop:2}}>
+                    {cat?.icon} {cat?.label}
+                    {prop && <span> · <strong style={{color:"var(--text)"}}>{prop.name}</strong></span>}
+                    {l && <span style={{color:"#1A6642"}}> · 📍 {l}</span>}
+                  </div>
+                  <div style={{fontSize:11,color:"var(--muted)"}}>
+                    {fmt(t.created_at)}
+                    {t.apartment && <span> · Appt {t.apartment}</span>}
+                    {t.email && <span> · <span style={{color:"#3A8FD4"}}>{t.email}</span></span>}
+                  </div>
+                </div>
+                <StatusBadge status={t.status}/>
+              </div>
+              {t.description && <p style={{fontSize:12,color:"var(--muted)",margin:"7px 0",lineHeight:1.5}}>{t.description}</p>}
+              <div style={{display:"flex",alignItems:"center",gap:8,margin:"7px 0",flexWrap:"wrap"}}>
+                <span style={{fontSize:11,color:"var(--muted)"}}>👍 {t.votes||0} vote{(t.votes||0)>1?"s":""}</span>
+                <span style={{display:"inline-block",padding:"2px 7px",borderRadius:4,fontSize:10,fontWeight:700,background:PRIORITY[t.priority]?.color+"18",color:PRIORITY[t.priority]?.color}}>
+                  {PRIORITY[t.priority]?.label}
+                </span>
+              </div>
+              <div style={{marginTop:8}}>
+                <label className="form-label" style={{fontSize:10}}>Note visible par les résidents</label>
+                <div style={{display:"flex",gap:7}}>
+                  <input type="text" style={{fontSize:12,padding:"7px 10px"}} placeholder="Ex : Technicien prévu le 12/06…"
+                    value={noteVal} onChange={e=>setEditNote(n=>({...n,[t.id]:e.target.value}))}/>
+                  <button className="btn-sm" style={{background:"var(--mint)",color:"var(--dark)",whiteSpace:"nowrap"}}
+                    onClick={()=>{ update(t.id,{note:editNote[t.id]??t.note}); setEditNote(n=>{const c={...n};delete c[t.id];return c;}); }}>
+                    OK
+                  </button>
+                </div>
+              </div>
+              <div style={{display:"flex",gap:8,marginTop:10,flexWrap:"wrap",alignItems:"center"}}>
+                <label className="form-label" style={{margin:0,fontSize:10}}>Statut :</label>
+                <select className="select-sm" value={t.status} onChange={e=>update(t.id,{status:e.target.value})}>
+                  {Object.entries(STATUS).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+                </select>
+                <label className="form-label" style={{margin:"0 0 0 6px",fontSize:10}}>Priorité :</label>
+                <select className="select-sm" value={t.priority} onChange={e=>update(t.id,{priority:e.target.value})}>
+                  {Object.entries(PRIORITY).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
+                </select>
+                <button className="btn-sm" style={{background:"#FDEDEE",color:"#CC2222",marginLeft:"auto"}}
+                  onClick={()=>{if(confirm("Supprimer ce ticket ?")) del(t.id);}}>
+                  Supprimer
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </>}
+
+      {tab==="annonces" && <>
+        <div className="card">
+          <div className="section-title" style={{fontSize:15,marginBottom:14}}>Nouvelle annonce</div>
+          <div className="form-group">
+            <div className="ann-form-row">
+              <div>
+                <label className="form-label">Titre *</label>
+                <input type="text" placeholder="Titre" value={annForm.title} onChange={e=>setAnnForm(f=>({...f,title:e.target.value}))}/>
+              </div>
+              <div>
+                <label className="form-label">Type</label>
+                <select value={annForm.type} onChange={e=>setAnnForm(f=>({...f,type:e.target.value}))}>
+                  {["Information","Travaux","Rappel","Urgent","Bienvenue"].map(t=><option key={t}>{t}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Destinataires</label>
+            <select value={annForm.property_id} onChange={e=>setAnnForm(f=>({...f,property_id:e.target.value}))}>
+              <option value="all">Toutes les résidences</option>
+              {PROPERTIES.map(p=><option key={p.id} value={p.id}>{p.name} ({p.id})</option>)}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Message *</label>
+            <textarea placeholder="Corps du message…" value={annForm.body} onChange={e=>setAnnForm(f=>({...f,body:e.target.value}))}/>
+          </div>
+          <button className="btn-primary" style={{marginTop:0}} disabled={!annForm.title.trim()||!annForm.body.trim()||sending} onClick={submitAnn}>
+            {sending?<span className="spinner"/>:"Publier l'annonce"}
+          </button>
+        </div>
+        {announcements.map(a=>{
+          const prop=a.property_id==="all"?null:PROPERTIES.find(p=>p.id===a.property_id);
+          return (
+            <div key={a.id} className="admin-ticket">
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div>
+                  <span className="ann-badge">{a.type}</span>
+                  {prop?<span style={{fontSize:10,color:"var(--mint)",marginLeft:6}}>{prop.name}</span>
+                    :<span style={{fontSize:10,color:"var(--muted)",marginLeft:6}}>Toutes résidences</span>}
+                  <div style={{fontSize:13,fontWeight:600,color:"var(--text)",marginTop:5}}>{a.title}</div>
+                  <div style={{fontSize:11,color:"var(--muted)"}}>{fmt(a.created_at)}</div>
+                </div>
+                <button className="btn-sm" style={{background:"#FDEDEE",color:"#CC2222"}}
+                  onClick={()=>{if(confirm("Supprimer ?")) delAnn(a.id);}}>Supprimer</button>
+              </div>
+              <p style={{fontSize:12,color:"var(--muted)",marginTop:7,lineHeight:1.5}}>{a.body}</p>
+            </div>
+          );
+        })}
+      </>}
+
+      {tab==="residences" && <>
+        <div style={{marginBottom:10}}>
+          <input type="text" placeholder="🔍  Rechercher une résidence…" value={propSearch} onChange={e=>setPropSearch(e.target.value)}/>
+        </div>
+        <div className="prop-list">
+          {PROPERTIES.filter(p=>!propSearch||p.name.toLowerCase().includes(propSearch.toLowerCase())||p.id.includes(propSearch)).map(p=>{
+            const count=tickets.filter(t=>t.property_id===p.id&&t.status!=="annule"&&t.status!=="resolu").length;
+            return (
+              <div key={p.id} className="prop-item">
+                <div>
+                  <div className="prop-item-name">{p.name}</div>
+                  <div className="prop-item-addr">{p.address}</div>
+                </div>
+                <div style={{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:4}}>
+                  <span className="prop-badge">{p.id}</span>
+                  {count>0&&<span style={{fontSize:10,color:STATUS.nouveau.color,fontWeight:700}}>{count} ticket{count>1?"s":""}</span>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <p style={{fontSize:10,color:"var(--muted)",textAlign:"center",marginTop:10}}>{PROPERTIES.length} résidences · Portefeuille Péclet / Vaudelle</p>
+      </>}
+
+      <Toast msg={toast}/>
+    </div>
+  );
+}
+
+// ─── APP ──────────────────────────────────────────────────────────────────────
+export default function App() {
+  const [mode, setMode] = useState("resident");
+  const [propertyId, setPropertyId] = useState(() => {
+  const params = new URLSearchParams(window.location.search);
+  return params.get("property") || null;
+});
+
+  return (
+    <div className="app">
+      <nav className="nav">
+        <div className="nav-logo">
+          <div className="logo-mark">F</div>
+          <div>
+            <div className="nav-title">Syndic Péclet</div>
+            <span className="nav-sub-text">Espace copropriété</span>
+          </div>
+        </div>
+        <div className="nav-toggle">
+          <button className={`nav-btn ${mode==="resident"?"active":""}`} onClick={()=>setMode("resident")}>Résidents</button>
+          <button className={`nav-btn ${mode==="admin"?"active":""}`} onClick={()=>setMode("admin")}>Admin ⚙</button>
+        </div>
+      </nav>
+
+      {mode==="resident"
+        ? propertyId
+          ? <ResidentView propertyId={propertyId} onBack={()=>setPropertyId(null)}/>
+          : <PropertyPicker onSelect={setPropertyId}/>
+        : <AdminView/>
+      }
+
+      {mode==="resident"&&propertyId&&(
+        <div style={{position:"fixed",bottom:16,left:"50%",transform:"translateX(-50%)",zIndex:150}}>
+          <button onClick={()=>setPropertyId(null)} style={{background:"var(--dark)",color:"rgba(255,255,255,0.6)",border:"1px solid rgba(78,238,160,0.2)",borderRadius:20,padding:"8px 16px",fontSize:11,fontWeight:600,cursor:"pointer",fontFamily:"'Inter',sans-serif",boxShadow:"0 4px 16px rgba(0,0,0,0.3)"}}>
+            ⬅ Changer de résidence
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
